@@ -1,34 +1,32 @@
 package com.airlocksoftware.hackernews.parser;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.ListIterator;
-
+import android.content.Context;
+import android.util.Log;
+import com.airlocksoftware.hackernews.data.ConnectionManager;
+import com.airlocksoftware.hackernews.data.UserPrefs;
+import com.airlocksoftware.hackernews.model.*;
 import org.apache.commons.lang3.StringUtils;
 import org.jsoup.Connection;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
-import org.jsoup.nodes.TextNode;
 import org.jsoup.select.Elements;
 
-import android.content.Context;
-import android.util.Log;
-
-import com.airlocksoftware.hackernews.data.ConnectionManager;
-import com.airlocksoftware.hackernews.data.UserPrefs;
-import com.airlocksoftware.hackernews.model.Page;
-import com.airlocksoftware.hackernews.model.Request;
-import com.airlocksoftware.hackernews.model.Result;
-import com.airlocksoftware.hackernews.model.Story;
-import com.airlocksoftware.hackernews.model.Timestamp;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.ListIterator;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class StoryParser {
 
 	private static final String TAG = StoryParser.class.getSimpleName();
 	private static final int NO_POSITION = -1;
 
-	/** Parse stories from Front Page, Ask, Best, or New **/
+	// num comments / points
+	private static final Pattern NUM_COMMENTS_PATTERN = Pattern.compile("\\d+");
+
+	/** Parse stories from Front Page, Ask, Best, or New * */
 	public static StoryResponse parseStoryList(Context context, Page page, Request request, String moreFnid) {
 		String urlExtension = generateUrlExtension(request, page, moreFnid);
 		StoryResponse response = parseStories(context, page, urlExtension);
@@ -39,30 +37,30 @@ public class StoryParser {
 		return response;
 	}
 
-	/** Generate the extension that we're trying to load (goes on the end of ConnectionManager.BASE_URL) **/
+	/** Generate the extension that we're trying to load (goes on the end of ConnectionManager.BASE_URL) * */
 	private static String generateUrlExtension(Request request, Page page, String moreFnid) {
 		String urlExtension = "/";
 		if (moreFnid != null && request == Request.MORE) urlExtension += moreFnid;
 		switch (page) {
-		case ASK:
-			urlExtension += "ask";
-			break;
-		case BEST:
-			urlExtension += "best";
-			break;
-		case NEW:
-			urlExtension += "newest";
-			break;
-		case ACTIVE:
-			urlExtension += "active";
-			break;
-		default:
-			break;
+			case ASK:
+				urlExtension += "ask";
+				break;
+			case BEST:
+				urlExtension += "best";
+				break;
+			case NEW:
+				urlExtension += "newest";
+				break;
+			case ACTIVE:
+				urlExtension += "active";
+				break;
+			default:
+				break;
 		}
 		return urlExtension;
 	}
 
-	/** Parse stories from the user's submissions page **/
+	/** Parse stories from the user's submissions page * */
 	public static StoryResponse parseUserSubmissions(Context context, String username, String moreFnid) {
 		if (StringUtils.isBlank(username)) {
 			throw new RuntimeException("StoryParser.parseUserSubmissions received a blank username");
@@ -81,9 +79,6 @@ public class StoryParser {
 		response.stories = new ArrayList<Story>();
 		response.result = Result.SUCCESS; // success unless error state is tripped
 		try {
-			long startTime = System.currentTimeMillis(); // TODO DEBUGGING
-			Log.d(TAG, "Start downloading stories");
-
 			UserPrefs data = new UserPrefs(context);
 			String userCookie = data.getUserCookie();
 			Document doc = getDocument(urlExtension, userCookie);
@@ -96,24 +91,19 @@ public class StoryParser {
 				return response;
 			}
 
-			long downloadTime = System.currentTimeMillis(); // TODO DEBUGGING
-			Log.d(TAG, "Download took: " + (downloadTime - startTime) + " milliseconds");
-
-			Elements titles = doc.select("td.title:containsOwn(.)");
+			Elements titles = doc.select("span.rank"); // html changed, story rank numbers now have this class
 			Elements subtexts = doc.select("td.subtext");
 			ListIterator<Element> titlesIterator = titles.listIterator();
 			ListIterator<Element> subtextIterator = subtexts.listIterator();
 
 			while (titlesIterator.hasNext() && subtextIterator.hasNext()) {
 				Element child = titlesIterator.next();
-				Element titleElement = child.parent();
+				Element titleElement = child.parent().parent();
 				Element subtextElement = subtextIterator.next();
 				Story story = parseStory(titleElement, subtextElement, userCookie != null);
 				story.page = page;
 				response.stories.add(story);
 			}
-			Log.d(TAG, "Parsing took: " + (System.currentTimeMillis() - downloadTime) + " milliseconds"); // TODO DEBUGGING
-
 			response.timestamp = getNewTimestamp(doc);
 
 		} catch (IOException e) {
@@ -138,18 +128,18 @@ public class StoryParser {
 		return con.get();
 	}
 
-	/** Creates a new timestamp if the more element exists on the page, else returns null. **/
-	private static Timestamp getNewTimestamp(Document doc) {
+	/** Creates a new timestamp if the more element exists on the page, else returns null. * */
+	private static StoryTimestamp getNewTimestamp(Document doc) {
 		// get new moreFnid & Timestamp
 		Element more = doc.select("td.title a:matchesOwn(^More$)")
-											.first();
+				.first();
 		if (more == null) return null;
 
 		String fnid = more.attr("href");
 		// strip leading slash (/) since it's added by the urlExtension code above
 		if (fnid.startsWith("/")) fnid = fnid.substring(1);
 
-		Timestamp timestamp = new Timestamp();
+		StoryTimestamp timestamp = new StoryTimestamp();
 		timestamp.fnid = fnid;
 		timestamp.time = System.currentTimeMillis();
 		return timestamp;
@@ -160,9 +150,9 @@ public class StoryParser {
 		// NULL_RESPONSE :: A response with all fields set to `null`
 		public static final StoryResponse NULL_RESPONSE = new StoryResponse();
 
-		public Result result       = null;
+		public Result result = null;
 		public List<Story> stories = null;
-		public Timestamp timestamp = null;
+		public StoryTimestamp timestamp = null;
 
 		public boolean isNull() {
 			return (this.equals(NULL_RESPONSE));
@@ -184,7 +174,7 @@ public class StoryParser {
 	 * Parses a story from the two tags we can reach with "td.title:containsOwn(.)" and
 	 * "td.subtext"
 	 * TODO figure out a better way of parsing than try / catching exceptions
-	 **/
+	 */
 	public static Story parseStory(Element title, Element subtext, boolean loggedIn) {
 		Story story = new Story();
 		story.position = parsePosition(title);
@@ -192,7 +182,7 @@ public class StoryParser {
 		String potentialJobsUrl = null;
 		try {
 			Element titleLink = title.select("td.title > a")
-																.first();
+					.first();
 			story.title = titleLink.text();
 
 			// try to get url & domain, if it fails you're on a self post
@@ -209,7 +199,7 @@ public class StoryParser {
 			story.ago = parseAgo(subtext);
 			story.storyId = parseStoryId(subtext);
 
-			// if the user is logged in, get isUpvoted, whence, and auth
+			// if the user is logged in, get isUpvoted, go_to, and auth
 			if (loggedIn) {
 
 				story.isUpvoted = true;
@@ -217,8 +207,8 @@ public class StoryParser {
 				story.auth = null;
 
 				Element voteAnchor = title.select("a[href^=vote]")
-																	.first();
-				
+						.first();
+
 				if (voteAnchor != null) {
 					String[] voteHref = voteAnchor.attr("href")
 							.split("[=&]");
@@ -245,23 +235,24 @@ public class StoryParser {
 		return story;
 	}
 
-	/** try to get number of comments. If it fails there are 0 comments. **/
+	/** try to get number of comments. If it fails there are 0 comments. * */
 	private static int parseNumComments(Element subtext) {
+		// last child is <a href="item?id=9029159">20 comments</a>
 		try {
-			return (Integer.parseInt(subtext.select("a[href^=item]")
-																			.first()
-																			.text()
-																			.split("\\s")[0]));
+			int lastIndex = subtext.children().size() - 1;
+			Element numComments = subtext.child(lastIndex);
+			Matcher matcher = NUM_COMMENTS_PATTERN.matcher(numComments.text());
+			if (matcher.find()) return Integer.parseInt(matcher.group());
 		} catch (NumberFormatException e) {
-			return 0;
+			Log.i(TAG, "Error parsing number of comments from: ", e);// + numComments.text());
+		} catch (Throwable t) {
+			Log.i(TAG, "Other error", t);
 		}
+		return 0;
 	}
 
 	private static int parseNumPoints(Element subtext) {
-		return Integer.parseInt(subtext.select("span[id^=score]")
-																		.first()
-																		.text()
-																		.split("\\s")[0]);
+		return Integer.parseInt(subtext.select("span.score").first().text().split("\\s")[0]);
 	}
 
 //	private static boolean parseHasUpvoteButton(Element voteAnchor) {
@@ -271,32 +262,31 @@ public class StoryParser {
 
 	private static long parseStoryId(Element subtext) {
 		return Long.parseLong(subtext.select("a[href^=item]")
-																	.attr("href")
-																	.split("=")[1]);
+				.attr("href")
+				.split("=")[1]);
 	}
 
 	private static String parseAgo(Element subtext) {
-		return ((TextNode) subtext.childNode(3)).text()
-																						.replace("|", "")
-																						.trim();
+		Element agoLink = subtext.select("a").get(1);
+		return agoLink.text().replace("|", "").trim();
 	}
 
 	private static String parseDomain(Element title) {
 		String domain = title.select("span.comhead")
-													.first()
-													.text()
-													.trim();
+				.first()
+				.text()
+				.trim();
 		// trim parens from domain;
 		domain = domain.substring(1, domain.length() - 1);
 		return domain;
 	}
 
-	/** Get the stories position (i.e. 1st, 2nd, 3rd, etc) on the page. **/
+	/** Get the stories position (i.e. 1st, 2nd, 3rd, etc) on the page. * */
 	private static int parsePosition(Element title) {
 		try {
 			String position = title.child(0)
-															.text()
-															.replace(".", "");
+					.text()
+					.replace(".", "");
 			return Integer.parseInt(position);
 		} catch (Exception e) { // TODO fix exception catch'em all!
 			// this means we're on the comments page
